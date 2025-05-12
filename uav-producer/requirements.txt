@@ -1,0 +1,6 @@
+kafka-python
+minio
+rasterio
+numpy
+Pillow
+opencv-python-headless
