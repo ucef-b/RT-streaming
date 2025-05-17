@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+echo "hostname: $HOSTNAME"
+echo "UAV_ID: $UAV_ID"
+
 echo "Waiting for Kafka to be ready..."
 while ! nc -z kafka 9092; do
   sleep 5

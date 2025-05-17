@@ -58,17 +58,44 @@ services:
     - minio
     entrypoint: >
       /bin/sh -c "
-      sleep 5;
-      /usr/bin/mc config host add myminio http://minio:9000 minioadmin minioadmin;
+      until /usr/bin/mc config host add myminio http://minio:9000 minioadmin minioadmin;
+      do
+        echo 'Waiting for MinIO to be ready...'
+        sleep 1
+      done;
       /usr/bin/mc mb myminio/uav-images --ignore-existing;
-      /usr/bin/mc anonymous set public myminio/uav-images;
+      /usr/bin/mc anonymous set download myminio/uav-images;
+      /usr/bin/mc policy set public myminio/uav-images;
       exit 0;
       "
     networks:
     - uav-net
 
-  # UAV Producers
+  # Backend
+  # backend:
+  #   build: ./backend
+  #   ports:
+  #     - "8000:8000"
+  #   depends_on:
+  #     - kafka
+  #     - minio
+  #   environment:
+  #     KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  #     MINIO_ENDPOINT: minio:9000
+  #     MINIO_ACCESS_KEY: minioadmin
+  #     MINIO_SECRET_KEY: minioadmin
+  #   networks:
+  #     - uav-net
+  # frontend
+  # frontend:
+  #   build: ./frontend
+  #   ports:
+  #     - "3000:3000"
 
+  #   networks:
+  #     - uav-net
+
+  # UAV Producers
   uav-producer-1:
     build: ./uav-producer
     environment:
@@ -96,6 +123,25 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       UAV_ID: '02'
+    depends_on:
+    - kafka
+    - minio
+    volumes:
+    - ./data:/data
+    deploy:
+      replicas: 1
+
+    networks:
+    - uav-net
+
+  uav-producer-3:
+    build: ./uav-producer
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      UAV_ID: '03'
     depends_on:
     - kafka
     - minio

@@ -4,3 +4,6 @@ rasterio
 numpy
 Pillow
 opencv-python-headless
+matplotlib
+tensorflow
+ai-edge-litert

@@ -12,11 +12,14 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 COPY requirements.txt .
-
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY producer.py entrypoint.sh ./
+COPY entrypoint.sh /app/
+COPY producer.py /app/
+COPY requirements.txt /app/
+COPY model.tflite /app/
 
-RUN chmod +x entrypoint.sh
+RUN sed -i 's/\r$//' /app/entrypoint.sh && \
+    chmod +x /app/entrypoint.sh
 
-ENTRYPOINT ["./entrypoint.sh"]
+CMD sh -c "./entrypoint.sh"

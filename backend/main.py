@@ -110,7 +110,7 @@ clients: Set[WebSocket] = set()
 async def consume_messages():
     logger.info(f"Connecting to Kafka at {KAFKA_BOOTSTRAP_SERVERS}")
     consumer = AIOKafkaConsumer(
-        KAFKA_TOPIC[1],
+        *KAFKA_TOPIC,
         bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
         group_id=KAFKA_CONSUMER_GROUP,
         auto_offset_reset='earliest',

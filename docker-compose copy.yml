@@ -97,7 +97,7 @@ services:
     
 
   # UAV Producers
-  uav-producer-1:
+  uav-producer:
     build: ./uav-producer
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
@@ -117,7 +117,7 @@ services:
     networks:
       - uav-net
 
-  uav-producer-2:
+  uav-producer-1:
     build: ./uav-producer
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092

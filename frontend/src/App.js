@@ -11,6 +11,7 @@ function App() {
   const [receivedImages, setReceivedImages] = useState([]);
   const [connectionStatus, setConnectionStatus] = useState('Connecting...');
   const [activeTool, setActiveTool] = useState('NDVI');
+  const [uavImages, setUavImages] = useState({});
   const websocket = useRef(null);
   const isMounted = useRef(true);
   
@@ -48,26 +49,24 @@ function App() {
     };
 
     websocket.current.onmessage = (event) => {
-      if (!isMounted.current) return; 
+      if (!isMounted.current) return;
       try {
         const message = JSON.parse(event.data);
         
         if (message.uav_id && message.timestamp) {
-          setReceivedImages(
-            [
-              { 
-                imageId: `UAV-${message.uav_id}-${message.timestamp}`,
-                metadata: message.metadata,
-                rgbUrl: message.rgb_url,
-                ndviUrl: message.ndvi_url
-              },
-            ].slice(0, MAX_IMAGES_TO_DISPLAY) 
-          );
-        } else {
-          console.warn('Received incomplete message:', message);
+          setUavImages((prevImages) => ({
+            ...prevImages,
+            [message.uav_id]: {
+              imageId: `UAV-${message.uav_id}-${message.timestamp}`,
+              metadata: message.metadata,
+              rgbUrl: message.rgb_url,
+              ndviUrl: message.ndvi_url,
+              timestamp: message.timestamp
+            }
+          }));
         }
       } catch (error) {
-        console.error('Failed to parse message or invalid message format:', error);
+        console.error('Failed to parse message:', error);
       }
     };
   }, []); 
@@ -91,6 +90,7 @@ function App() {
         websocket.current = null; 
       }
     };
+    
   }, [connectWebSocket]); 
 
   const getConnectionStatusClass = () => {
@@ -186,27 +186,30 @@ function App() {
       {/* Main Content */}
       <div className="main-content">
         <h2 className="content-title">{activeTool}</h2>
-        <p className="image-count">Displaying the latest {Math.min(receivedImages.length, MAX_IMAGES_TO_DISPLAY)} images (newest first).</p>
+        <p className="image-count">Displaying latest image from each UAV.</p>
         
         <div className="image-gallery">
-          {receivedImages.length > 0 ? (
-            receivedImages.map((img) => (
-              <div key={img.imageId} className="image-card">
-                <h2 className="image-title">{img.imageId}</h2>
-                <img
-                  src={activeTool === 'NDVI' ? img.ndviUrl : img.rgbUrl}
-                  alt={img.imageId}
-                  className="image"
-                  loading="lazy"
-                />
-                {img.metadata && (
-                  <div className="image-metadata">
-                    <p>Resolution: {img.metadata.resolution?.join(' x ')}</p>
-                    <p>Bands: {img.metadata.bands?.join(', ')}</p>
-                  </div>
-                )}
-              </div>
-            ))
+          {Object.entries(uavImages).length > 0 ? (
+            Object.entries(uavImages)
+              .sort(([uavId1], [uavId2]) => uavId1.localeCompare(uavId2))
+              .map(([uavId, img]) => (
+                <div key={img.imageId} className="image-card">
+                  <h2 className="image-title">UAV {uavId}</h2>
+                  <img
+                    src={activeTool === 'NDVI' ? img.ndviUrl : img.rgbUrl}
+                    alt={img.imageId}
+                    className="image"
+                    loading="lazy"
+                  />
+                  {img.metadata && (
+                    <div className="image-metadata">
+                      <p>Resolution: {img.metadata.resolution?.join(' x ')}</p>
+                      <p>Bands: {img.metadata.bands?.join(', ')}</p>
+                      <p>Last Update: {new Date(img.timestamp * 1000).toLocaleString()}</p>
+                    </div>
+                  )}
+                </div>
+              ))
           ) : (
             <div className="no-images">
               <p>Waiting for images...</p>

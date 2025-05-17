@@ -14,9 +14,14 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+
 COPY . .
 
-COPY entrypoint.sh .
-RUN chmod +x entrypoint.sh
 
-CMD ["./entrypoint.sh"]
+RUN ls -la /app/ && \
+    cat /app/entrypoint.sh && \
+    sed -i 's/\r$//' /app/entrypoint.sh && \
+    chmod +x /app/entrypoint.sh
+
+
+CMD sh /app/entrypoint.sh

@@ -10,27 +10,84 @@ from PIL import Image
 import warnings
 from rasterio.errors import NotGeoreferencedWarning
 warnings.filterwarnings("ignore", category=NotGeoreferencedWarning)
+import matplotlib.pyplot as plt
+from ai_edge_litert.interpreter import Interpreter
+
+interpreter = Interpreter(model_path="model.tflite")
+interpreter.allocate_tensors()
+
+# Get input and output details
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
 
 # Configuration
 UAV_ID = os.getenv("UAV_ID")
 MISSION_PATH = f"/data/{UAV_ID}" # 
 KAFKA_TOPIC = f"uav.{UAV_ID}.images" # depence on uav-producer are runing in the same container
 
+def create_patches(ndvi_array, patch_size=512):
+    """Create patches from NDVI array"""
+    patches = []
+    patch_positions = []  # Store positions for reconstruction
+    h, w = ndvi_array.shape
+    
+    for i in range(0, h-patch_size+1, patch_size):
+        for j in range(0, w-patch_size+1, patch_size):
+            patch = ndvi_array[i:i+patch_size, j:j+patch_size]
+            # Resize patch to 256x256
+            patch_img = Image.fromarray((patch * 255).astype(np.uint8))
+            patch_resized = patch_img.resize((256, 256), Image.Resampling.BILINEAR)
+            patch_array = np.array(patch_resized) / 255.0
+            patches.append(patch_array)
+            patch_positions.append((i, j))
+    
+    return np.array(patches), patch_positions
+
+def predict_patches(patches, interpreter):
+    """Make predictions on patches using TFLite"""
+    predictions = []
+    classification_outputs = []
+    patches = patches[..., np.newaxis].astype(np.float32)
+    
+    for patch in patches:
+        # Prepare input tensor
+        input_data = np.expand_dims(patch, axis=0)
+        interpreter.set_tensor(input_details[0]['index'], input_data)
+        
+        # Run inference
+        interpreter.invoke()
+        
+        # Get predictions from both outputs
+        classification_output = interpreter.get_tensor(output_details[0]['index'])  # Shape: [1, 6]
+        segmentation_output = interpreter.get_tensor(output_details[1]['index'])   # Shape: [1, 256, 256, 1]
+        
+        predictions.append(segmentation_output[0])  # Remove batch dimension
+        classification_outputs.append(classification_output[0])  # Remove batch dimension
+        
+        # Log first prediction for debugging
+        if len(predictions) == 1:
+            print(f"Classification output shape: {classification_output.shape}")
+            print(f"Classification values: {classification_output[0]}")
+            print(f"Segmentation output shape: {segmentation_output.shape}")
+    
+    return np.array(predictions), np.array(classification_outputs)
+
 
 def calculate_ndvi(red_band, nir_band):
     red = red_band.astype(np.float32)
     nir = nir_band.astype(np.float32)
     ndvi = (nir - red) / (nir + red + 1e-8)
-    
-    ndvi_normalized = ((ndvi + 1) * 127.5).astype(np.uint8)
-    
-    rgb_ndvi = np.zeros((ndvi.shape[0], ndvi.shape[1], 3), dtype=np.uint8)
-    
-    rgb_ndvi[:, :, 0] = 255 - ndvi_normalized  
-    rgb_ndvi[:, :, 1] = ndvi_normalized        
-    rgb_ndvi[:, :, 2] = 0                      
-    
-    return rgb_ndvi
+    return ndvi
+
+def ndvi_to_bytes(ndvi):
+    buf = BytesIO()
+    plt.figure(figsize=(ndvi.shape[1] / 100, ndvi.shape[0] / 100), dpi=100)
+    plt.imshow(ndvi, cmap='RdYlGn', vmin=-1, vmax=1)
+    plt.axis('off')
+    plt.savefig(buf, format='JPEG', bbox_inches='tight', pad_inches=0)
+    plt.close()
+    buf.seek(0)
+    return buf
 
 def process_image(base_name, minio_client):
     bands = {}
@@ -48,18 +105,21 @@ def process_image(base_name, minio_client):
     rgb_img = Image.fromarray(rgb_normalized)
     
     # Create colored NDVI
-    ndvi_colored = calculate_ndvi(bands['red'], bands['nir'])
-    ndvi_img = Image.fromarray(ndvi_colored)
+    ndvi = calculate_ndvi(bands['red'], bands['nir'])
+
+    patches, patch_positions = create_patches(ndvi)
+    segmentation_preds, classification_preds = predict_patches(patches, interpreter)
+
+    print(f"Segmentation predictions shape: {segmentation_preds.shape}")
+    print(f"Classification predictions shape: {classification_preds.shape}")
+
+    ndvi_bytes = ndvi_to_bytes(ndvi)
     
     # Upload to MinIO
     timestamp = int(time.time())
     jpeg_bytes = BytesIO()
     rgb_img.save(jpeg_bytes, format='JPEG')
     jpeg_bytes.seek(0)
-    
-    ndvi_bytes = BytesIO()
-    ndvi_img.save(ndvi_bytes, format='JPEG')
-    ndvi_bytes.seek(0)
     
     # Store in MinIO
     minio_client.put_object(
@@ -78,6 +138,7 @@ def process_image(base_name, minio_client):
         content_type='image/jpeg'
     )
     
+    
     return {
         "uav_id": UAV_ID,
         "timestamp": timestamp,
@@ -85,7 +146,11 @@ def process_image(base_name, minio_client):
         "ndvi_url": f"http://localhost:9000/uav-images/{UAV_ID}/{timestamp}_ndvi.jpg",
         "metadata": {
             "resolution": bands['red'].shape,
-            "bands": list(bands.keys())
+            "bands": list(bands.keys()),
+            "predictions": {
+                "classification": classification_preds.tolist(),
+                "segmentation_shape": segmentation_preds.shape
+            }
         }
     }
 
