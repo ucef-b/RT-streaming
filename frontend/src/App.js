@@ -12,6 +12,7 @@ function App() {
   const [connectionStatus, setConnectionStatus] = useState('Connecting...');
   const [activeTool, setActiveTool] = useState('NDVI');
   const [uavImages, setUavImages] = useState({});
+  const [isLogPanelOpen, setIsLogPanelOpen] = useState(false);
   const websocket = useRef(null);
   const isMounted = useRef(true);
   
@@ -61,7 +62,8 @@ function App() {
               metadata: message.metadata,
               rgbUrl: message.rgb_url,
               ndviUrl: message.ndvi_url,
-              timestamp: message.timestamp
+              overlayUrl: message.overlay_url,
+              timestamp: message.timestamp  
             }
           }));
         }
@@ -105,6 +107,61 @@ function App() {
     setActiveTool(tool);
   };
 
+  // Add new component for processing logs
+  const ProcessingLogs = ({ uavImages }) => {
+    return (
+      <div className="processing-logs">
+        {Object.entries(uavImages).map(([uavId, img]) => {
+          const info = img.metadata?.processing_info;
+          if (!info) return null;
+          
+          return (
+            <div key={uavId} className="log-entry">
+              <br />
+              <span className="uav-id">[UAV{uavId}]:</span>
+              <span className="time">time: {info.time_seconds}s,</span> <br />
+              <br />
+              <span className="anomalies">
+                Stress found: {info.detected_anomalies.length > 0 
+                  ? `{${info.detected_anomalies.join(', ')}}`
+                  : 'none'}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const LogPanel = ({ isOpen, onClose, uavImages }) => {
+    return (
+      <div className={`log-panel ${isOpen ? 'open' : ''}`}>
+        <div className="log-panel-header">
+          <h3>Processing Logs</h3>
+          <button className="close-button" onClick={onClose}>×</button>
+        </div>
+        <div className="log-panel-content">
+          {Object.entries(uavImages).map(([uavId, img]) => {
+            const info = img.metadata?.processing_info;
+            if (!info) return null;
+            
+            return (
+              <div key={uavId} className="log-entry">
+                <span className="uav-id">[UAV{uavId}]:</span>
+                <span className="time">time: {info.time_seconds}s</span>
+                <span className="anomalies">
+                  stress_found: {info.detected_anomalies.length > 0 
+                    ? `{${info.detected_anomalies.join(', ')}}`
+                    : 'none'}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="app-container">
       {/* Sidebar */}
@@ -124,7 +181,7 @@ function App() {
         {/* Sidebar Navigation */}
         <div className="sidebar-content">
           <div className="sidebar-section">
-            <h3 className="section-title">Vegetation index:</h3>
+            <h3 className="section-title">Visual type:</h3>
             <ul className="tool-list">
               {['NDVI', 'RGB'].map((tool) => (
                 <li key={tool}>
@@ -142,50 +199,67 @@ function App() {
           <div className="sidebar-section">
             <h3 className="section-title">Machine learning:</h3>
             <ul className="tool-list">
+            
               <li>
                 <button
-                  onClick={() => handleToolSelect('K-means')}
-                  className={`tool-button ${activeTool === 'K-means' ? 'active' : ''}`}
+                  onClick={() => handleToolSelect('Model Prediction')}
+                  className={`tool-button ${activeTool === 'Model Prediction' ? 'active' : ''}`}
                 >
-                  K-means
+                  Model Prediction
                 </button>
               </li>
-              <li>
-                <button
-                  onClick={() => handleToolSelect('U-net (with NDVI)')}
-                  className={`tool-button ${activeTool === 'U-net (with NDVI)' ? 'active' : ''}`}
-                >
-                  U-net (with NDVI)
-                </button>
-              </li>
-              <li>
-                <button
-                  onClick={() => handleToolSelect('U-net (With RGBN)')}
-                  className={`tool-button ${activeTool === 'U-net (With RGBN)' ? 'active' : ''}`}
-                >
-                  U-net (With RGBN)
-                </button>
-              </li>
+            
             </ul>
           </div>
 
           <div className="sidebar-section">
-            <h3 className="section-title">Time consuming:</h3>
-            <div className="time-consuming-container">
-              <div className="time-consuming-info">
-                <span className="processing-text">Processing...</span>
-                <div className="progress-bar">
-                  <div className="progress-fill"></div>
-                </div>
+            <h3 className="section-title">Stress Types:</h3>
+            <div className="stress-colors">
+              <div className="stress-color-item">
+                <div className="color-box" style={{backgroundColor: 'rgb(255, 0, 0)'}}></div>
+                <span>Nutrient Deficiency</span>
+              </div>
+              <div className="stress-color-item">
+                <div className="color-box" style={{backgroundColor: 'rgb(0, 255, 0)'}}></div>
+                <span>Drydown</span>
+              </div>
+              <div className="stress-color-item">
+                <div className="color-box" style={{backgroundColor: 'rgb(0, 0, 255)'}}></div>
+                <span>Water</span>
+              </div>
+              <div className="stress-color-item">
+                <div className="color-box" style={{backgroundColor: 'rgb(255, 255, 0)'}}></div>
+                <span>Weed Cluster</span>
+              </div>
+              <div className="stress-color-item">
+                <div className="color-box" style={{backgroundColor: 'rgb(255, 0, 255)'}}></div>
+                <span>Planter Skip</span>
               </div>
             </div>
           </div>
+
+          {/* Update the time consuming section in the sidebar */}
+          {/* <div className="sidebar-section">
+            <h3 className="section-title">Processing Logs:</h3>
+            <div className="time-consuming-container">
+              <ProcessingLogs uavImages={uavImages} />
+            </div>
+          </div> */}
         </div>
       </div>
 
       {/* Main Content */}
       <div className="main-content">
-        <h2 className="content-title">{activeTool}</h2>
+        <div className="main-header">
+          <h2 className="content-title">{activeTool}</h2>
+          <button 
+            className="log-toggle-button"
+            onClick={() => setIsLogPanelOpen(!isLogPanelOpen)}
+          >
+            {isLogPanelOpen ? 'Hide Logs' : 'Show Logs'}
+          </button>
+        </div>
+        
         <p className="image-count">Displaying latest image from each UAV.</p>
         
         <div className="image-gallery">
@@ -196,7 +270,13 @@ function App() {
                 <div key={img.imageId} className="image-card">
                   <h2 className="image-title">UAV {uavId}</h2>
                   <img
-                    src={activeTool === 'NDVI' ? img.ndviUrl : img.rgbUrl}
+                    src={
+                    activeTool === 'NDVI' 
+                      ? img.ndviUrl 
+                      : activeTool === 'Model Prediction'
+                        ? img.overlayUrl
+                        : img.rgbUrl
+                  }
                     alt={img.imageId}
                     className="image"
                     loading="lazy"
@@ -216,6 +296,12 @@ function App() {
             </div>
           )}
         </div>
+
+        <LogPanel 
+          isOpen={isLogPanelOpen} 
+          onClose={() => setIsLogPanelOpen(false)}
+          uavImages={uavImages}
+        />
       </div>
     </div>
   );

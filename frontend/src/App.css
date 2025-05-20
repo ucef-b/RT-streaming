@@ -167,6 +167,9 @@ body {
 .time-consuming-container {
   padding: 12px;
   border-radius: 4px;
+  
+  overflow-y: auto;
+  margin-top: 10px;
 }
 
 .time-consuming-info {
@@ -196,6 +199,36 @@ body {
   border-radius: 4px;
 }
 
+/* Processing logs styles */
+.processing-logs {
+  padding: 10px;
+  font-family: monospace;
+  font-size: 16px;
+  border-radius: 4px;
+  color: #fff;
+}
+
+.log-entry {
+  margin-bottom: 8px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.log-entry .uav-id {
+  color: #297868;
+  font-weight: bold;
+}
+
+.log-entry .time {
+  color: #335669;
+  margin: 0 6px;
+}
+
+.log-entry .anomalies {
+  color: #6b2c13;
+}
+
 /* Main content styles */
 .main-content {
   flex: 1;
@@ -207,7 +240,7 @@ body {
 .content-title {
   font-size: 28px;
   font-weight: bold;
-  margin-bottom: 15px;
+  margin-bottom: 0;
   color: #2d4420;
   padding-bottom: 10px;
   letter-spacing: 1px;
@@ -269,6 +302,98 @@ body {
   
   font-size: 18px;
   border: 1px solid #d1dbc7;
+}
+
+/* Stress colors styles */
+.stress-colors {
+  padding: 10px 0;
+}
+
+.stress-color-item {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.color-box {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  margin-right: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* Log panel styles */
+.log-panel {
+  position: fixed;
+  bottom: 0;
+  right: 0;
+  width: 100%;
+  max-width: 500px;
+  color: #fff;
+  background-color: #fff;
+  transform: translateY(100%);
+  transition: transform 0.3s ease;
+  z-index: 1000;
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.2);
+  height: 400px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+}
+
+.log-panel.open {
+  transform: translateY(0);
+}
+
+.log-panel-header {
+  padding: 8px 15px;
+  background-color: #2d2d2d;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #3d3d3d;
+  border-radius: 10px 10px 0 0;
+}
+
+.log-panel-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 15px;
+  font-family: monospace;
+}
+
+.close-button {
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0 5px;
+}
+
+.log-toggle-button {
+  padding: 8px 16px;
+  background-color: #434343;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-left: 15px;
+}
+
+.main-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.log-entry {
+  padding: 8px 0;
+  border-bottom: 1px solid #3d3d3d;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 /* Animation for connection status */

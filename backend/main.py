@@ -121,7 +121,6 @@ async def consume_messages():
     
     try:
         async for msg in consumer:
-            logger.info(f"Received message: {msg.value}")
             await broadcast_message(msg.value)
     except Exception as e:
         logger.error(f"Error consuming messages: {str(e)}")

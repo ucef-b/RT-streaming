@@ -12,9 +12,30 @@ from rasterio.errors import NotGeoreferencedWarning
 warnings.filterwarnings("ignore", category=NotGeoreferencedWarning)
 import matplotlib.pyplot as plt
 from ai_edge_litert.interpreter import Interpreter
+import cv2
+from collections import defaultdict
 
 interpreter = Interpreter(model_path="model.tflite")
 interpreter.allocate_tensors()
+
+CLASS_COLORS = {
+    0: (255, 0, 0),    # Red for class 0 nutrient_deficiency 
+    1: (0, 255, 0),    # Green for class 1 drydown 
+    2: (0, 0, 255),    # Blue for class 2 water 
+    3: (255, 255, 0),  # Cyan for class 3 weed_cluster 
+    4: (255, 0, 255),  # Magenta for class 4 planter_skip
+    5: None            # No color for class 5 (not detected)
+}
+
+# Add anomaly class names
+ANOMALY_CLASSES = {
+    0: "nutrient_deficiency",
+    1: "drydown",
+    2: "water",
+    3: "weed_cluster",
+    4: "planter_skip",
+    5: "not_detected"
+}
 
 # Get input and output details
 input_details = interpreter.get_input_details()
@@ -42,6 +63,49 @@ def create_patches(ndvi_array, patch_size=512):
             patch_positions.append((i, j))
     
     return np.array(patches), patch_positions
+
+def create_segmentation_overlay(rgb_img, segmentation_preds, classification_preds, patch_positions, patch_size=512):
+    """Create colored overlay of segmentation masks on RGB image"""
+    # Convert PIL Image to numpy array
+    rgb_array = np.array(rgb_img)
+    
+    # Create empty overlay with same size as RGB image
+    overlay = np.zeros_like(rgb_array)
+    
+    # For each patch
+    for patch_pred, class_pred, (y, x) in zip(segmentation_preds, classification_preds, patch_positions):
+        # Get the most likely class
+        predicted_class = np.argmax(class_pred)
+        
+        # Skip if it's class 5 (not detected)
+        if predicted_class == 5:
+            continue
+            
+        # Get color for this class
+        color = CLASS_COLORS[predicted_class]
+        
+        # Resize segmentation mask back to 512x512
+        mask = cv2.resize(patch_pred, (patch_size, patch_size))
+        
+        # Threshold the mask
+        mask = (mask > 0.5).astype(np.uint8)
+        
+        # Create colored mask
+        colored_mask = np.zeros((patch_size, patch_size, 3), dtype=np.uint8)
+        colored_mask[mask > 0] = color
+        
+        # Add to overlay at correct position
+        try:
+            overlay[y:y+patch_size, x:x+patch_size] = colored_mask
+        except ValueError as e:
+            print(f"Error placing patch at position ({x}, {y}): {str(e)}")
+            continue
+    
+    # Blend RGB image with overlay
+    alpha = 0.5  # Transparency factor
+    blended = cv2.addWeighted(rgb_array, 1, overlay, alpha, 0)
+    
+    return Image.fromarray(blended)
 
 def predict_patches(patches, interpreter):
     """Make predictions on patches using TFLite"""
@@ -90,6 +154,9 @@ def ndvi_to_bytes(ndvi):
     return buf
 
 def process_image(base_name, minio_client):
+    start_time = time.time()
+    detected_anomalies = set()
+    
     bands = {}
     for band in ['red', 'green', 'blue', 'nir']:
         tif_path = f"{MISSION_PATH}/{base_name}_{band}_high.tif"
@@ -109,9 +176,13 @@ def process_image(base_name, minio_client):
 
     patches, patch_positions = create_patches(ndvi)
     segmentation_preds, classification_preds = predict_patches(patches, interpreter)
+    segmentation_overlay = create_segmentation_overlay(
+        rgb_img, 
+        segmentation_preds, 
+        classification_preds, 
+        patch_positions
+    )
 
-    print(f"Segmentation predictions shape: {segmentation_preds.shape}")
-    print(f"Classification predictions shape: {classification_preds.shape}")
 
     ndvi_bytes = ndvi_to_bytes(ndvi)
     
@@ -121,6 +192,10 @@ def process_image(base_name, minio_client):
     rgb_img.save(jpeg_bytes, format='JPEG')
     jpeg_bytes.seek(0)
     
+    overlay_bytes = BytesIO()
+    segmentation_overlay.save(overlay_bytes, format='JPEG')
+    overlay_bytes.seek(0)
+
     # Store in MinIO
     minio_client.put_object(
         "uav-images",
@@ -138,18 +213,40 @@ def process_image(base_name, minio_client):
         content_type='image/jpeg'
     )
     
+    minio_client.put_object(
+        "uav-images",
+        f"{UAV_ID}/{timestamp}_overlay.jpg",
+        overlay_bytes,
+        length=overlay_bytes.getbuffer().nbytes,
+        content_type='image/jpeg'
+    )
     
+    # After model prediction, analyze classifications
+    for class_pred in classification_preds:
+        predicted_class = np.argmax(class_pred)
+        if predicted_class != 5:  # If not "not_detected"
+            detected_anomalies.add(ANOMALY_CLASSES[predicted_class])
+    
+    # Calculate processing time
+    processing_time = round(time.time() - start_time, 2)
+    
+    # Add processing info to return data
     return {
         "uav_id": UAV_ID,
         "timestamp": timestamp,
         "rgb_url": f"http://localhost:9000/uav-images/{UAV_ID}/{timestamp}_rgb.jpg",
         "ndvi_url": f"http://localhost:9000/uav-images/{UAV_ID}/{timestamp}_ndvi.jpg",
+        "overlay_url": f"http://localhost:9000/uav-images/{UAV_ID}/{timestamp}_overlay.jpg",
         "metadata": {
             "resolution": bands['red'].shape,
             "bands": list(bands.keys()),
             "predictions": {
                 "classification": classification_preds.tolist(),
                 "segmentation_shape": segmentation_preds.shape
+            },
+            "processing_info": {
+                "time_seconds": processing_time,
+                "detected_anomalies": list(detected_anomalies)
             }
         }
     }
