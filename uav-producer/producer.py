@@ -44,7 +44,11 @@ output_details = interpreter.get_output_details()
 # Configuration
 UAV_ID = os.getenv("UAV_ID")
 MISSION_PATH = f"/data/{UAV_ID}" # 
-KAFKA_TOPIC = f"uav.{UAV_ID}.images" # depence on uav-producer are runing in the same container
+
+# Define Kafka topics for each image type
+KAFKA_TOPIC_RGB = f"uav.{UAV_ID}.images.rgb"
+KAFKA_TOPIC_NDVI = f"uav.{UAV_ID}.images.ndvi"
+KAFKA_TOPIC_PREDICTED = f"uav.{UAV_ID}.images.predicted"
 
 def create_patches(ndvi_array, patch_size=512):
     """Create patches from NDVI array"""
@@ -153,10 +157,12 @@ def ndvi_to_bytes(ndvi):
     buf.seek(0)
     return buf
 
-def process_image(base_name, minio_client):
+def send_rgb_and_ndvi_immediately(base_name, minio_client, producer):
+    """Process and send RGB and NDVI images immediately after preparation"""
     start_time = time.time()
-    detected_anomalies = set()
+    timestamp = int(time.time())
     
+    # Load bands
     bands = {}
     for band in ['red', 'green', 'blue', 'nir']:
         tif_path = f"{MISSION_PATH}/{base_name}_{band}_high.tif"
@@ -173,30 +179,14 @@ def process_image(base_name, minio_client):
     
     # Create colored NDVI
     ndvi = calculate_ndvi(bands['red'], bands['nir'])
-
-    patches, patch_positions = create_patches(ndvi)
-    segmentation_preds, classification_preds = predict_patches(patches, interpreter)
-    segmentation_overlay = create_segmentation_overlay(
-        rgb_img, 
-        segmentation_preds, 
-        classification_preds, 
-        patch_positions
-    )
-
-
     ndvi_bytes = ndvi_to_bytes(ndvi)
     
-    # Upload to MinIO
-    timestamp = int(time.time())
+    # Prepare RGB bytes
     jpeg_bytes = BytesIO()
     rgb_img.save(jpeg_bytes, format='JPEG')
     jpeg_bytes.seek(0)
     
-    overlay_bytes = BytesIO()
-    segmentation_overlay.save(overlay_bytes, format='JPEG')
-    overlay_bytes.seek(0)
-
-    # Store in MinIO
+    # Upload RGB to MinIO
     minio_client.put_object(
         "uav-images",
         f"{UAV_ID}/{timestamp}_rgb.jpg",
@@ -205,6 +195,7 @@ def process_image(base_name, minio_client):
         content_type='image/jpeg'
     )
     
+    # Upload NDVI to MinIO
     minio_client.put_object(
         "uav-images",
         f"{UAV_ID}/{timestamp}_ndvi.jpg",
@@ -213,43 +204,102 @@ def process_image(base_name, minio_client):
         content_type='image/jpeg'
     )
     
+    # Create basic metadata for RGB and NDVI
+    basic_metadata = {
+        "resolution": bands['red'].shape,
+        "bands": list(bands.keys()),
+        "processing_info": {
+            "time_seconds": round(time.time() - start_time, 2),
+            "stage": "basic_processing"
+        }
+    }
+    
+    # Send RGB message immediately
+    rgb_message = {
+        "uav_id": UAV_ID,
+        "timestamp": timestamp,
+        "image_url": f"http://localhost:9000/uav-images/{UAV_ID}/{timestamp}_rgb.jpg",
+        "image_type": "rgb",
+        "metadata": basic_metadata
+    }
+    
+    # Send NDVI message immediately
+    ndvi_message = {
+        "uav_id": UAV_ID,
+        "timestamp": timestamp,
+        "image_url": f"http://localhost:9000/uav-images/{UAV_ID}/{timestamp}_ndvi.jpg",
+        "image_type": "ndvi",
+        "metadata": basic_metadata
+    }
+    
+    producer.send(KAFKA_TOPIC_RGB, value=rgb_message)
+    producer.send(KAFKA_TOPIC_NDVI, value=ndvi_message)
+    
+    print(f"Sent RGB and NDVI for {base_name} immediately to topics: {KAFKA_TOPIC_RGB}, {KAFKA_TOPIC_NDVI}")
+    
+    return rgb_img, ndvi, bands, timestamp
+
+def process_predictions_and_send(base_name, rgb_img, ndvi, bands, timestamp, minio_client, producer):
+    """Process model predictions and send the predicted image"""
+    start_time = time.time()
+    detected_anomalies = set()
+    
+    # Create patches and run predictions
+    patches, patch_positions = create_patches(ndvi)
+    segmentation_preds, classification_preds = predict_patches(patches, interpreter)
+    segmentation_overlay = create_segmentation_overlay(
+        rgb_img, 
+        segmentation_preds, 
+        classification_preds, 
+        patch_positions
+    )
+    
+    # Upload predicted image to MinIO
+    overlay_bytes = BytesIO()
+    segmentation_overlay.save(overlay_bytes, format='JPEG')
+    overlay_bytes.seek(0)
+    
     minio_client.put_object(
         "uav-images",
-        f"{UAV_ID}/{timestamp}_overlay.jpg",
+        f"{UAV_ID}/{timestamp}_predicted.jpg",
         overlay_bytes,
         length=overlay_bytes.getbuffer().nbytes,
         content_type='image/jpeg'
     )
     
-    # After model prediction, analyze classifications
+    # Analyze classifications for anomalies
     for class_pred in classification_preds:
         predicted_class = np.argmax(class_pred)
         if predicted_class != 5:  # If not "not_detected"
             detected_anomalies.add(ANOMALY_CLASSES[predicted_class])
     
-    # Calculate processing time
-    processing_time = round(time.time() - start_time, 2)
-    
-    # Add processing info to return data
-    return {
-        "uav_id": UAV_ID,
-        "timestamp": timestamp,
-        "rgb_url": f"http://localhost:9000/uav-images/{UAV_ID}/{timestamp}_rgb.jpg",
-        "ndvi_url": f"http://localhost:9000/uav-images/{UAV_ID}/{timestamp}_ndvi.jpg",
-        "overlay_url": f"http://localhost:9000/uav-images/{UAV_ID}/{timestamp}_overlay.jpg",
-        "metadata": {
-            "resolution": bands['red'].shape,
-            "bands": list(bands.keys()),
-            "predictions": {
-                "classification": classification_preds.tolist(),
-                "segmentation_shape": segmentation_preds.shape
-            },
-            "processing_info": {
-                "time_seconds": processing_time,
-                "detected_anomalies": list(detected_anomalies)
-            }
+    # Create complete metadata with predictions
+    complete_metadata = {
+        "resolution": bands['red'].shape,
+        "bands": list(bands.keys()),
+        "predictions": {
+            "classification": classification_preds.tolist(),
+            "segmentation_shape": segmentation_preds.shape
+        },
+        "processing_info": {
+            "time_seconds": round(time.time() - start_time, 2),
+            "detected_anomalies": list(detected_anomalies),
+            "stage": "prediction_complete"
         }
     }
+    
+    # Send predicted image message
+    predicted_message = {
+        "uav_id": UAV_ID,
+        "timestamp": timestamp,
+        "image_url": f"http://localhost:9000/uav-images/{UAV_ID}/{timestamp}_predicted.jpg",
+        "image_type": "predicted",
+        "metadata": complete_metadata
+    }
+    
+    producer.send(KAFKA_TOPIC_PREDICTED, value=predicted_message)
+    
+    print(f"Sent predicted image for {base_name} to topic: {KAFKA_TOPIC_PREDICTED}")
 
 def main():
     processed_files = set()
@@ -261,11 +311,10 @@ def main():
         secure=False
     )
 
-
     producer = KafkaProducer(
-    bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS").split(","),
-    value_serializer=lambda v: json.dumps(v).encode('utf-8'),
-    retries=5
+        bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS").split(","),
+        value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+        retries=5
     )
 
     if not minio_client.bucket_exists("uav-images"):
@@ -276,10 +325,18 @@ def main():
             base_name = filename.replace('_red_high.tif', '')
             if base_name not in processed_files:
                 try:
-                    data = process_image(base_name, minio_client)
-                    producer.send(KAFKA_TOPIC, value=data)
-                    print(f"Sent data for {base_name}")
+                    # Step 1: Process and send RGB and NDVI immediately
+                    rgb_img, ndvi, bands, timestamp = send_rgb_and_ndvi_immediately(
+                        base_name, minio_client, producer
+                    )
+                    
+                    # Step 2: Process predictions and send predicted image
+                    process_predictions_and_send(
+                        base_name, rgb_img, ndvi, bands, timestamp, minio_client, producer
+                    )
+                    
                     processed_files.add(base_name)
+                    
                 except Exception as e:
                     print(f"Error processing {base_name}: {str(e)}")
         
