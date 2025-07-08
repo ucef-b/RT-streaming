@@ -1,87 +1,3 @@
-# from fastapi import FastAPI, WebSocket
-# from aiokafka import AIOKafkaConsumer
-# import asyncio
-# import json
-# import os
-# from fastapi.middleware.cors import CORSMiddleware
-# import logging
-
-# logging.basicConfig(level=logging.INFO)
-# logger = logging.getLogger(__name__)
-
-# KAFKA_TOPIC = "uav.01.images"
-
-# KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-
-# app = FastAPI()
-
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=["*"],  
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
-
-# websocket_connections = []
-
-# @app.websocket("/ws")
-# async def websocket_endpoint(websocket: WebSocket):
-#     await websocket.accept()
-#     websocket_connections.append(websocket)
-    
-#     try:
-#         while True:
-#             await websocket.receive_text()
-#     except:
-#         websocket_connections.remove(websocket)
-
-# async def consume_kafka():
-#     retries = 5
-#     retry_delay = 5
-    
-#     for attempt in range(retries):
-#         try:
-#             consumer = AIOKafkaConsumer(
-#                 "uav.01.images",
-#                 bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-#                 group_id="dashboard-group",
-#                 auto_offset_reset='earliest',
-#                 enable_auto_commit=True,
-#                 max_poll_interval_ms=300000,
-#                 session_timeout_ms=45000,
-#                 heartbeat_interval_ms=15000
-#             )
-            
-#             await consumer.start()
-#             logger.info("Kafka Consumer started.")
-            
-#             try:
-#                 async for msg in consumer:
-#                     data = json.loads(msg.value)
-#                     for conn in websocket_connections:
-#                         await conn.send_text(json.dumps(data))
-#                     print(f"Received message: {data}")
-#             except Exception as e:
-#                 print(f"Error processing message: {str(e)}")
-#             finally:
-#                 await consumer.stop()
-                
-#         except Exception as e:
-#             print(f"Connection attempt {attempt + 1} failed: {str(e)}")
-#             if attempt < retries - 1:
-#                 print(f"Retrying in {retry_delay} seconds...")
-#                 await asyncio.sleep(retry_delay)
-#             else:
-#                 print("Max retries reached. Failed to connect to Kafka.")
-#                 raise
-
-# @app.on_event("startup")
-# async def startup_event():
-#     asyncio.create_task(consume_kafka())
-
-
-
 import asyncio
 import uvicorn
 
@@ -102,7 +18,15 @@ logger = logging.getLogger(__name__)
 
 # Use environment variable with fallback to localhost:9092
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:29092")
-KAFKA_TOPIC = ["uav.01.images","uav.02.images", "uav.03.images", "uav.04.images", "uav.05.images", "uav.06.images", "uav.07.images", "uav.08.images", "uav.09.images", "uav.10.images"]
+
+# Generate Kafka topics for all UAV IDs with separate topics for each image type
+KAFKA_TOPICS = []
+for i in range(1, 21):
+    uav_id = f"{i:02d}"
+    KAFKA_TOPICS.append(f"uav.{uav_id}.images.rgb")
+    KAFKA_TOPICS.append(f"uav.{uav_id}.images.ndvi")
+    KAFKA_TOPICS.append(f"uav.{uav_id}.images.predicted")
+
 KAFKA_CONSUMER_GROUP = "image_display_group_v2" 
 
 clients: Set[WebSocket] = set()
@@ -110,7 +34,7 @@ clients: Set[WebSocket] = set()
 async def consume_messages():
     logger.info(f"Connecting to Kafka at {KAFKA_BOOTSTRAP_SERVERS}")
     consumer = AIOKafkaConsumer(
-        *KAFKA_TOPIC,
+        *KAFKA_TOPICS,
         bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
         group_id=KAFKA_CONSUMER_GROUP,
         auto_offset_reset='earliest',
@@ -220,7 +144,7 @@ minio_client = Minio(
     MINIO_ENDPOINT,
     access_key=MINIO_ACCESS_KEY,
     secret_key=MINIO_SECRET_KEY,
-    secure=False  # Set to True if using HTTPS
+    secure=False  # Set to True if using USE_SSL
 )
 
 # Create bucket if it doesn't exist
