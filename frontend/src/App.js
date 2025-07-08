@@ -2,13 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 
 const WEBSOCKET_URL = 'ws://localhost:8000/ws'; 
-const MAX_IMAGES_TO_DISPLAY = 20; 
-
-
-
 
 function App() {
-  const [receivedImages, setReceivedImages] = useState([]);
   const [connectionStatus, setConnectionStatus] = useState('Connecting...');
   const [activeTool, setActiveTool] = useState('NDVI');
   const [uavImages, setUavImages] = useState({});
@@ -36,16 +31,15 @@ function App() {
       
       setTimeout(() => {
         if (isMounted.current) { 
-             connectWebSocket(); 
+          connectWebSocket(); 
         }
-      }, Math.min(30000, 5000)); 
+      }, 3000); 
     };
 
     websocket.current.onerror = (error) => {
       console.error('WebSocket Error:', error);
       if (!isMounted.current) return;
       setConnectionStatus('Connection Error');
-      
       websocket.current?.close(); 
     };
 
@@ -54,7 +48,8 @@ function App() {
       try {
         const message = JSON.parse(event.data);
         
-        if (message.uav_id && message.timestamp) {
+        // Handle complete image sets
+        if (message.type === 'complete_image' && message.uav_id && message.timestamp) {
           setUavImages((prevImages) => ({
             ...prevImages,
             [message.uav_id]: {
@@ -62,8 +57,9 @@ function App() {
               metadata: message.metadata,
               rgbUrl: message.rgb_url,
               ndviUrl: message.ndvi_url,
-              overlayUrl: message.overlay_url,
-              timestamp: message.timestamp  
+              predictedUrl: message.predicted_url,  // Changed from overlayUrl
+              timestamp: message.timestamp,
+              detectedAnomalies: message.detected_anomalies || []  // New field
             }
           }));
         }
@@ -86,51 +82,24 @@ function App() {
         websocket.current.onmessage = null;
         websocket.current.onopen = null;
         if(websocket.current.readyState === WebSocket.OPEN) {
-             websocket.current.close(1000, 'Component unmounting');
-             console.log('WebSocket connection closed.');
+          websocket.current.close(1000, 'Component unmounting');
         }
         websocket.current = null; 
       }
     };
-    
   }, [connectWebSocket]); 
 
   const getConnectionStatusClass = () => {
     switch(connectionStatus) {
       case 'Connected': return 'status-dot status-connected';
       case 'Connection Error': return 'status-dot status-error';
-      default: return connectionStatus.includes('Disconnected') ? 'status-dot status-error' : 'status-dot status-connecting';
+      default: return connectionStatus.includes('Disconnected') ? 
+        'status-dot status-error' : 'status-dot status-connecting';
     }
   };
 
   const handleToolSelect = (tool) => {
     setActiveTool(tool);
-  };
-
-  // Add new component for processing logs
-  const ProcessingLogs = ({ uavImages }) => {
-    return (
-      <div className="processing-logs">
-        {Object.entries(uavImages).map(([uavId, img]) => {
-          const info = img.metadata?.processing_info;
-          if (!info) return null;
-          
-          return (
-            <div key={uavId} className="log-entry">
-              <br />
-              <span className="uav-id">[UAV{uavId}]:</span>
-              <span className="time">time: {info.time_seconds}s,</span> <br />
-              <br />
-              <span className="anomalies">
-                Stress found: {info.detected_anomalies.length > 0 
-                  ? `{${info.detected_anomalies.join(', ')}}`
-                  : 'none'}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    );
   };
 
   const LogPanel = ({ isOpen, onClose, uavImages }) => {
@@ -150,9 +119,8 @@ function App() {
                 <span className="uav-id">[UAV{uavId}]:</span>
                 <span className="time">time: {info.time_seconds}s</span>
                 <span className="anomalies">
-                  stress_found: {info.detected_anomalies.length > 0 
-                    ? `{${info.detected_anomalies.join(', ')}}`
-                    : 'none'}
+                  stress_found: {img.detectedAnomalies && img.detectedAnomalies.length > 0 ? 
+                    `{${img.detectedAnomalies.join(', ')}}` : 'none'}
                 </span>
               </div>
             );
@@ -162,13 +130,16 @@ function App() {
     );
   };
 
+  // Helper to format UAV ID for display
+  const formatUavId = (uavId) => {
+    return uavId.length === 1 ? `0${uavId}` : uavId;
+  };
+
   return (
     <div className="app-container">
       {/* Sidebar */}
       <div className="sidebar">
         <div className="sidebar-header">
-          
-          {/* Enhanced Connection Status */}
           <div className="connection-status-container">
             <span className="connection-label">Connection:</span>
             <div className="connection-indicator">
@@ -178,7 +149,6 @@ function App() {
           </div>
         </div>
 
-        {/* Sidebar Navigation */}
         <div className="sidebar-content">
           <div className="sidebar-section">
             <h3 className="section-title">Visual type:</h3>
@@ -199,7 +169,6 @@ function App() {
           <div className="sidebar-section">
             <h3 className="section-title">Machine learning:</h3>
             <ul className="tool-list">
-            
               <li>
                 <button
                   onClick={() => handleToolSelect('Model Prediction')}
@@ -208,7 +177,6 @@ function App() {
                   Model Prediction
                 </button>
               </li>
-            
             </ul>
           </div>
 
@@ -237,14 +205,6 @@ function App() {
               </div>
             </div>
           </div>
-
-          {/* Update the time consuming section in the sidebar */}
-          {/* <div className="sidebar-section">
-            <h3 className="section-title">Processing Logs:</h3>
-            <div className="time-consuming-container">
-              <ProcessingLogs uavImages={uavImages} />
-            </div>
-          </div> */}
         </div>
       </div>
 
@@ -260,7 +220,11 @@ function App() {
           </button>
         </div>
         
-        <p className="image-count">Displaying latest image from each UAV.</p>
+        <p className="image-count">
+          {Object.keys(uavImages).length > 0 
+            ? `Displaying latest images from ${Object.keys(uavImages).length} UAVs` 
+            : 'Waiting for images...'}
+        </p>
         
         <div className="image-gallery">
           {Object.entries(uavImages).length > 0 ? (
@@ -268,31 +232,44 @@ function App() {
               .sort(([uavId1], [uavId2]) => uavId1.localeCompare(uavId2))
               .map(([uavId, img]) => (
                 <div key={img.imageId} className="image-card">
-                  <h2 className="image-title">UAV {uavId}</h2>
-                  <img
-                    src={
-                    activeTool === 'NDVI' 
-                      ? img.ndviUrl 
-                      : activeTool === 'Model Prediction'
-                        ? img.overlayUrl
-                        : img.rgbUrl
-                  }
-                    alt={img.imageId}
-                    className="image"
-                    loading="lazy"
-                  />
+                  <h2 className="image-title">UAV {formatUavId(uavId)}</h2>
+                  <div className="image-container">
+                    <img
+                      src={
+                        activeTool === 'NDVI' 
+                          ? img.ndviUrl 
+                          : activeTool === 'Model Prediction'
+                            ? img.predictedUrl  // Changed from overlayUrl
+                            : img.rgbUrl
+                      }
+                      alt={`UAV ${uavId} ${activeTool} view`}
+                      className="image"
+                      loading="lazy"
+                    />
+                    {/* Anomaly indicators */}
+                    {img.detectedAnomalies && img.detectedAnomalies.length > 0 && (
+                      <div className="anomaly-indicators">
+                        {img.detectedAnomalies.map((anomaly, idx) => (
+                          <span key={idx} className="anomaly-tag">{anomaly}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   {img.metadata && (
                     <div className="image-metadata">
                       <p>Resolution: {img.metadata.resolution?.join(' x ')}</p>
-                      <p>Bands: {img.metadata.bands?.join(', ')}</p>
                       <p>Last Update: {new Date(img.timestamp * 1000).toLocaleString()}</p>
+                      {img.metadata.processing_info && (
+                        <p>Processed in: {img.metadata.processing_info.time_seconds}s</p>
+                      )}
                     </div>
                   )}
                 </div>
               ))
           ) : (
             <div className="no-images">
-              <p>Waiting for images...</p>
+              <p>Waiting for images from UAVs...</p>
+              <div className="loading-spinner"></div>
             </div>
           )}
         </div>
