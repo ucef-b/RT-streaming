@@ -72,28 +72,28 @@ services:
     - uav-net
 
   # Backend
-  # backend:
-  #   build: ./backend
-  #   ports:
-  #     - "8000:8000"
-  #   depends_on:
-  #     - kafka
-  #     - minio
-  #   environment:
-  #     KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-  #     MINIO_ENDPOINT: minio:9000
-  #     MINIO_ACCESS_KEY: minioadmin
-  #     MINIO_SECRET_KEY: minioadmin
-  #   networks:
-  #     - uav-net
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    depends_on:
+      - kafka
+      - minio
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    networks:
+      - uav-net
   # frontend
-  # frontend:
-  #   build: ./frontend
-  #   ports:
-  #     - "3000:3000"
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
 
-  #   networks:
-  #     - uav-net
+    networks:
+      - uav-net
 
   # UAV Producers
   uav-producer-1:
