@@ -20,7 +20,7 @@
 │   ├── model.tflite
 │   ├── producer.py
 │   └── requirements.txt
-├── data/              # (You mount this for UAV input/output)
+├── data/
 ├── create_yml.py      # Script to generate docker-compose files with multiple UAVs
 ├── docker-compose.yml # Main Compose file (edit or generate as needed)
 ├── ...
