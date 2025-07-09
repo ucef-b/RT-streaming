@@ -31,7 +31,7 @@
 - **backend/**: FastAPI app that consumes Kafka messages, serves WebSocket/API for frontend, and manages MinIO bucket.
 - **frontend/**: React app for real-time visualization of UAV images, predictions, and logs.
 - **uav-producer/**: Simulates UAVs. Reads images, runs ML inference, uploads to MinIO, and sends Kafka messages.
-- **data/**: Shared volume for UAV input/output data (mounted into producers).
+- **data/**: data from agriculture-vision-2021 (raw).
 - **create_yml.py**: Python script to generate a `docker-compose` file with any number of UAV producers.
 
 ---
